@@ -1,7 +1,6 @@
-#include <stdio.h>
+#include <iostream>
 #include <cuda_runtime.h>
 
-// CUDA kernel for array summation using reduction
 __global__ void sumArray(float *A, float *result, int N) {
     extern __shared__ float shared_data[];
 
@@ -30,24 +29,41 @@ __global__ void sumArray(float *A, float *result, int N) {
     }
 }
 
-void sumArrayCUDA(float *A, float *result, int N) {
+int main() {
+    const int N = 1024;  // Array size
+    float A[N], result = 0.0f;
+
+    // Initialize array A with example values
+    for (int i = 0; i < N; ++i) {
+        A[i] = 1.0f;
+    }
+
+    // Allocate memory on the GPU
     float *d_A, *d_result;
     size_t size = N * sizeof(float);
-
     cudaMalloc(&d_A, size);
     cudaMalloc(&d_result, sizeof(float));
 
+    // Copy array A to the GPU
     cudaMemcpy(d_A, A, size, cudaMemcpyHostToDevice);
     cudaMemset(d_result, 0, sizeof(float));
 
-    // Launch the kernel with block size of 256 threads
+    // Set up grid and block dimensions
     int threadsPerBlock = 256;
     int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
 
+    // Launch kernel
     sumArray<<<blocks, threadsPerBlock, threadsPerBlock * sizeof(float)>>>(d_A, d_result, N);
 
-    cudaMemcpy(result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
+    // Copy the result back to the host
+    cudaMemcpy(&result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
 
+    // Display result
+    std::cout << "Sum of array: " << result << std::endl;
+
+    // Free GPU memory
     cudaFree(d_A);
     cudaFree(d_result);
+
+    return 0;
 }
