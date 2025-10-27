@@ -13,11 +13,15 @@ OBJ1 = prob1.o
 OBJ2 = prob2.o
 
 # 最终生成的可执行文件
-EXEC = program.out
+EXEC1 = prob1.out
+EXEC2 = prob2.out
 
 # 默认规则：生成可执行文件
-$(EXEC): $(OBJ1) $(OBJ2)
-	$(CC) $(CFLAGS) -o $(EXEC) $(OBJ1) $(OBJ2)
+$(EXEC1): $(OBJ1)
+	$(CC) $(CFLAGS) -o $(EXEC1) $(OBJ1)
+
+$(EXEC2): $(OBJ2)
+	$(CC) $(CFLAGS) -o $(EXEC2) $(OBJ2)
 
 # 编译规则：将 .cu 文件编译为 .o 文件
 $(OBJ1): $(SRC1)
@@ -28,4 +32,4 @@ $(OBJ2): $(SRC2)
 
 # 清理规则：删除生成的 .o 和可执行文件
 clean:
-	rm -f $(OBJ1) $(OBJ2) $(EXEC)
+	rm -f $(OBJ1) $(OBJ2) $(EXEC1) $(EXEC2)
