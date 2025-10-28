@@ -1,35 +1,25 @@
-# 定义编译器
+# Makefile for CUDA Programming Assignment
+
+# Compiler and flags
 CC = nvcc
+# -O3 for optimization
+# -arch=native to build for the GPU available on the system
+# -Wno-deprecated-gpu-targets to suppress the warning about old architectures
+CFLAGS = -O3 -arch=native -Wno-deprecated-gpu-targets --std=c++17
 
-# 定义编译选项
-CFLAGS = -O3
+# Executable names
+EXECS = prob1.out prob2.out
 
-# 源文件
-SRC1 = prob1.cu
-SRC2 = prob2.cu
+# Default target: build all executables
+all: $(EXECS)
 
-# 目标文件
-OBJ1 = prob1.o
-OBJ2 = prob2.o
+# Rule to build each executable from its corresponding .cu file
+prob1.out: prob1.cu
+	$(CC) $(CFLAGS) -o $@ $<
 
-# 最终生成的可执行文件
-EXEC1 = prob1.out
-EXEC2 = prob2.out
+prob2.out: prob2.cu
+	$(CC) $(CFLAGS) -o $@ $<
 
-# 默认规则：生成可执行文件
-$(EXEC1): $(OBJ1)
-	$(CC) $(CFLAGS) -o $(EXEC1) $(OBJ1)
-
-$(EXEC2): $(OBJ2)
-	$(CC) $(CFLAGS) -o $(EXEC2) $(OBJ2)
-
-# 编译规则：将 .cu 文件编译为 .o 文件
-$(OBJ1): $(SRC1)
-	$(CC) $(CFLAGS) -c $(SRC1)
-
-$(OBJ2): $(SRC2)
-	$(CC) $(CFLAGS) -c $(SRC2)
-
-# 清理规则：删除生成的 .o 和可执行文件
+# Rule to clean up all generated files
 clean:
-	rm -f $(OBJ1) $(OBJ2) $(EXEC1) $(EXEC2)
+	rm -f $(EXECS) prob1.o prob2.o
