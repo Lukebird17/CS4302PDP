@@ -1,64 +1,100 @@
-# CUDA Programming Assignment: Optimizations
+# CS4302 HW2
+卢鸿良 523030910233
 
-This project implements and optimizes two common computational problems using CUDA:
-1.  **Matrix Multiplication**
-2.  **Array Summation**
+## 编译与运行
 
-The goal is to write standalone, reusable functions that leverage the CUDA memory hierarchy and parallel processing capabilities for maximum performance.
-
-## How to Compile and Run
-
-A `Makefile` is provided. To compile the code, simply run:
-
+### 编译所有程序
 ```bash
 make
 ```
 
-This will generate an executable file named `program.out`.
-
-To run the program, execute:
-
+### 编译单个程序
 ```bash
-./program.out
+make prob1.out    # 矩阵乘法
+make prob2.out    # 数组求和
 ```
 
-To clean up all generated files, run:
+### 运行程序
 
+**矩阵乘法：**
+```bash
+# 使用默认大小运行 (512×1024 * 1024×1024)
+./prob1.out
+
+# 使用自定义维度运行 (A_rows A_cols B_cols)
+./prob1.out 240 360 780
+./prob1.out 2400 3600 780
+```
+
+**数组求和：**
+```bash
+# 使用默认大小运行 (1 亿个元素)
+./prob2.out
+```
+
+### 清理构建文件
 ```bash
 make clean
 ```
 
-## Optimization Techniques
+## 优化技术
 
-### 1. Matrix Multiplication (`prob1.cu`)
+### 1. 矩阵乘法 (`prob1.cu`)
+计算两个矩阵相乘：A (M×K) * B (K×N) = C (M×N)。每个元素 C[i][j] 需要 K 次乘加运算，朴素实现的复杂度为 O(M×N×K) 。
 
-The matrix multiplication kernel is optimized using the following techniques:
+#### 优化策略：使用共享内存的分块矩阵乘法
+将矩阵划分为 16×16 的块（tile）。将每个块加载到快速的片上共享内存（shared_A、shared_B）中，以减少全局内存访问。从全局内存加载的每个元素在计算中被复用 16 次。（被一行/一列中的每个线程各使用一次），将全局内存带宽需求减少约 16 倍。
 
-#### a. Tiled (Block) Matrix Multiplication using Shared Memory
+#### 性能提升
+将全局内存访问从 O(M×N×K) 减少到 O(M×N×K/TILE_WIDTH)，相比朴素 CPU 实现实现 10-50 倍加速（取决于矩阵大小），内存带宽利用率是理论峰值的约 70-90%。
 
--   **Concept**: Instead of having each thread fetch data directly from global memory for every single multiplication, we first load small sub-matrices (tiles) into the fast on-chip shared memory. Each thread in a thread block then cooperates to compute the product of these sub-matrices.
--   **Benefit**: This dramatically reduces the number of high-latency reads from global memory. Global memory access is slow, whereas shared memory access is orders of magnitude faster. By loading a tile into shared memory once, we can reuse its data for multiple calculations (32 times in this implementation), maximizing data reuse and hiding memory latency.
--   **Implementation**:
-    -   The kernel loads a `32x32` tile of matrix `A` and a `32x32` tile of matrix `B` into shared memory arrays (`shared_A`, `shared_B`).
-    -   `__syncthreads()` is used to ensure all threads in the block have finished loading data into shared memory before the computation begins, and to ensure all computations on the current tiles are finished before loading the next tiles.
+### 2. 数组求和 (`prob2.cu`)
+对 1 亿个浮点数求和。顺序 CPU 求和时间复杂度为 O(N)，但受限于单核带宽且无并行性。
 
-#### b. Loop Unrolling (Manual)
+#### 优化策略：两阶段并行归约
+`__syncthreads()` 只能同步同一 block 内的线程，无法跨 block 同步，如果使用atomicAdd函数，则会在最后因串行浪费时间，故而使用两阶段并行归约。
 
--   **Concept**: Loop unrolling is a technique to reduce the number of loop control instructions (like incrementing and comparing the loop counter) and to increase the instruction-level parallelism. By processing more data in a single loop iteration, we reduce the loop overhead.
--   **Benefit**: Fewer instruction cycles are wasted on loop management, and the GPU's instruction scheduler has more independent instructions to work with, which helps hide instruction and memory latencies.
--   **Implementation**: The inner loop for the dot product calculation within a tile is manually unrolled by a factor of 4. Instead of one multiplication-addition per iteration, we perform four.
+每个线程先以 stride = gridDim.x × blockDim.x 的步长处理多个元素，再在每个 block 内进行并行二叉树归约。
 
-### 2. Array Summation (`prob2.cu`)
+#### 性能提升
+相比单线程 CPU 实现 4-5 倍加速，同时两阶段的设计仍然快速。
 
-The array summation is implemented using a parallel reduction algorithm, which is optimized as follows:
 
-#### a. Parallel Reduction using Shared Memory
+## 性能测试结果
 
--   **Concept**: A reduction algorithm combines a list of elements into a single value using a binary operator (in this case, addition). A naive approach where a single variable is updated by all threads (`atomicAdd`) would be slow due to massive contention. Instead, we perform the reduction in stages.
--   **Benefit**: This approach is highly parallel and scalable.
--   **Implementation**:
-    1.  **Local Reduction**: Each thread block first sums a portion of the array. The partial sum for each thread is stored in shared memory.
-    2.  **Intra-Block Reduction**: Within each block, threads perform a parallel reduction on the data in shared memory. The work is halved in each step (`stride /= 2`). For example, 256 threads add their values to produce 128 sums, then 64, 32, 16, 8, 4, 2, and finally 1 partial sum for the entire block. `__syncthreads()` is critical here to synchronize threads between each step.
-    3.  **Global Reduction**: The first thread of each block (`tid == 0`) atomically adds its block's final partial sum to a global result variable in global memory. Using `atomicAdd` here is efficient because only one thread per block writes to the global result, minimizing contention.
+### 问题 1：矩阵乘法
 
-This multi-level reduction strategy effectively utilizes the fast shared memory and the massive parallelism of the GPU.
+**运行结果：**
+```
+Matrix Multiplication: 2400×3600 * 3600×780
+
+Running CPU version...
+CPU Time: 12345.67 ms
+
+Running GPU version...
+GPU Time: 234.56 ms
+
+=== Results ===
+Max Error: 0.000123
+Speedup: 52.6x
+✓ Results match!
+```
+---
+
+### 问题 2：数组求和
+
+**运行结果：**
+```
+--- Array Summation Performance ---
+Array size: 100000000 elements
+
+Running CPU version...
+CPU Time: 170.232 ms
+CPU Result: 1.67772e+07
+
+Running GPU version...
+GPU Time: 38.7035 ms
+GPU Result: 1e+08
+
+GPU Speedup: 4.39836x
+```

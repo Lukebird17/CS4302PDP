@@ -6,24 +6,47 @@
 #include <algorithm>
 #include <cuda_runtime.h>
 
-// --- CUDA Kernel and Host Function ---
 
-// Optimized parallel reduction kernel
-__global__ void sumArrayKernel(const float *A, float *result, int N) {
+// First Kernel 
+__global__ void sumArrayKernel(const float *A, float *partials, int N) {
     extern __shared__ float shared_data[];
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // Grid-stride loop to handle large arrays
     float my_sum = 0.0f;
     while (i < N) {
         my_sum += A[i];
         i += gridDim.x * blockDim.x;
     }
+
     shared_data[tid] = my_sum;
     __syncthreads();
 
-    // Intra-block reduction
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            shared_data[tid] += shared_data[tid + stride];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        partials[blockIdx.x] = shared_data[0];
+    }
+}
+
+// Second kernel 
+__global__ void reduceFinal(float *partials, float *result, int num_partials) {
+    extern __shared__ float shared_data[];
+    int tid = threadIdx.x;
+    int i = tid;
+
+    float my_sum = 0.0f;
+    while (i < num_partials) {
+        my_sum += partials[i];
+        i += blockDim.x;
+    }
+
+    shared_data[tid] = my_sum;
+    __syncthreads();
+
     for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
         if (tid < stride) {
             shared_data[tid] += shared_data[tid + stride];
@@ -31,34 +54,35 @@ __global__ void sumArrayKernel(const float *A, float *result, int N) {
         __syncthreads();
     }
 
-    // First thread of each block writes its partial sum to global memory
     if (tid == 0) {
-        atomicAdd(result, shared_data[0]);
+        *result = shared_data[0];
     }
 }
 
-// Wrapper function for the CUDA implementation
 void sumArrayCUDA(const std::vector<float>& A, float& result, int N) {
-    float *d_A, *d_result;
-    cudaMalloc(&d_A, N * sizeof(float));
-    cudaMalloc(&d_result, sizeof(float));
-
-    cudaMemcpy(d_A, A.data(), N * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemset(d_result, 0, sizeof(float));
-
+    float *d_A, *d_partials, *d_result;
     int threadsPerBlock = 256;
     int blocks = std::min((N + threadsPerBlock - 1) / threadsPerBlock, 1024);
-    size_t shared_mem_size = threadsPerBlock * sizeof(float);
+    
+    cudaMalloc(&d_A, N * sizeof(float));
+    cudaMalloc(&d_partials, blocks * sizeof(float));
+    cudaMalloc(&d_result, sizeof(float));
+    cudaMemcpy(d_A, A.data(), N * sizeof(float), cudaMemcpyHostToDevice);
 
-    sumArrayKernel<<<blocks, threadsPerBlock, shared_mem_size>>>(d_A, d_result, N);
+    size_t shared_mem_size = threadsPerBlock * sizeof(float);
+    sumArrayKernel<<<blocks, threadsPerBlock, shared_mem_size>>>(d_A, d_partials, N);
+
+    int finalThreads = std::min(256, blocks);
+    size_t final_shared_mem = finalThreads * sizeof(float);
+    reduceFinal<<<1, finalThreads, final_shared_mem>>>(d_partials, d_result, blocks);
 
     cudaMemcpy(&result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
-
     cudaFree(d_A);
+    cudaFree(d_partials);
     cudaFree(d_result);
 }
 
-// --- C++ CPU Implementation ---
+// CPU 
 void sumArrayCPU(const std::vector<float>& A, float& result, int N) {
     result = 0.0f;
     for (int i = 0; i < N; ++i) {
@@ -66,21 +90,18 @@ void sumArrayCPU(const std::vector<float>& A, float& result, int N) {
     }
 }
 
-// --- Main Function for Comparison ---
 int main() {
-    const int N = 100000000; // Array size (e.g., 100 million elements)
+    const int N = 100000000; 
 
     std::cout << "--- Array Summation Performance ---" << std::endl;
     std::cout << "Array size: " << N << " elements" << std::endl;
 
-    // Initialize array
     std::vector<float> h_A(N);
-    std::generate(h_A.begin(), h_A.end(), [](){ return 1.0f; }); // Fill with 1.0 for easy verification
+    std::generate(h_A.begin(), h_A.end(), [](){ return 1.0f; }); 
 
     float result_cpu = 0.0f;
     float result_gpu = 0.0f;
 
-    // --- CPU Execution and Timing ---
     std::cout << "\nRunning CPU version..." << std::endl;
     auto start_cpu = std::chrono::high_resolution_clock::now();
     sumArrayCPU(h_A, result_cpu, N);
@@ -89,7 +110,6 @@ int main() {
     std::cout << "CPU Time: " << cpu_time.count() << " ms" << std::endl;
     std::cout << "CPU Result: " << result_cpu << std::endl;
 
-    // --- GPU Execution and Timing ---
     std::cout << "\nRunning GPU version..." << std::endl;
     cudaEvent_t start_gpu, stop_gpu;
     cudaEventCreate(&start_gpu);
@@ -104,8 +124,6 @@ int main() {
     cudaEventElapsedTime(&gpu_time, start_gpu, stop_gpu);
     std::cout << "GPU Time: " << gpu_time << " ms" << std::endl;
     std::cout << "GPU Result: " << result_gpu << std::endl;
-
-    // --- Speedup ---
     std::cout << "\nGPU Speedup: " << cpu_time.count() / gpu_time << "x" << std::endl;
 
     cudaEventDestroy(start_gpu);
